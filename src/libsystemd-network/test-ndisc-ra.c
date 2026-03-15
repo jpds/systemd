@@ -148,6 +148,17 @@ TEST(radv) {
         assert_se(sd_radv_set_home_agent(ra, 10, 300 * USEC_PER_SEC, USEC_INFINITY) >= 0);
         sd_radv_unset_home_agent(ra);
 
+        /* statistics getters */
+        uint64_t n;
+        ASSERT_RETURN_EXPECTED_SE(sd_radv_get_n_ra_sent(NULL, &n) < 0);
+        ASSERT_RETURN_EXPECTED_SE(sd_radv_get_n_ra_sent(ra, NULL) < 0);
+        ASSERT_RETURN_EXPECTED_SE(sd_radv_get_n_rs_received(NULL, &n) < 0);
+        ASSERT_RETURN_EXPECTED_SE(sd_radv_get_n_rs_received(ra, NULL) < 0);
+        assert_se(sd_radv_get_n_ra_sent(ra, &n) >= 0);
+        assert_se(n == 0);
+        assert_se(sd_radv_get_n_rs_received(ra, &n) >= 0);
+        assert_se(n == 0);
+
         ra = sd_radv_unref(ra);
         assert_se(!ra);
 }
@@ -243,6 +254,92 @@ static int radv_recv(sd_event_source *s, int fd, uint32_t revents, void *userdat
         assert_se(sd_radv_stop(ra) >= 0);
         test_stopped = true;
         return 0;
+}
+
+static unsigned n_rs_sent;
+static unsigned n_ra_received;
+
+static int radv_recv_with_rs(sd_event_source *s, int fd, uint32_t revents, void *userdata) {
+        sd_radv *ra = ASSERT_PTR(userdata);
+        _cleanup_free_ uint8_t *buf = NULL;
+        ssize_t buflen;
+
+        buflen = next_datagram_size_fd(fd);
+        assert_se(buflen >= 0);
+        assert_se(buf = new0(uint8_t, buflen));
+
+        assert_se(read(fd, buf, buflen) == buflen);
+
+        dump_message(buf, buflen);
+        n_ra_received++;
+
+        if (n_rs_sent == 0) {
+                /* After receiving the first unsolicited RA, send a Router Solicitation */
+                struct nd_router_solicit rs = {
+                        .nd_rs_type = ND_ROUTER_SOLICIT,
+                };
+
+                assert_se(write(fd, &rs, sizeof(rs)) == sizeof(rs));
+                n_rs_sent++;
+        } else {
+                /* We received the solicited RA response, stop and verify */
+                assert_se(sd_radv_stop(ra) >= 0);
+                assert_se(sd_event_exit(sd_radv_get_event(ra), 0) >= 0);
+        }
+
+        return 0;
+}
+
+TEST(ra_statistics) {
+        _cleanup_(sd_event_unrefp) sd_event *e = NULL;
+        _cleanup_(sd_event_source_unrefp) sd_event_source *recv_router_advertisement = NULL;
+        _cleanup_(sd_radv_unrefp) sd_radv *ra = NULL;
+        uint64_t ra_sent, rs_received;
+
+        n_rs_sent = 0;
+        n_ra_received = 0;
+
+        assert_se(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_NONBLOCK, 0, test_fd) >= 0);
+
+        assert_se(sd_event_new(&e) >= 0);
+
+        assert_se(sd_radv_new(&ra) >= 0);
+        assert_se(sd_radv_attach_event(ra, e, 0) >= 0);
+
+        assert_se(sd_radv_set_ifindex(ra, 42) >= 0);
+        assert_se(sd_radv_set_router_lifetime(ra, 180 * USEC_PER_SEC) >= 0);
+        assert_se(sd_radv_set_hop_limit(ra, 64) >= 0);
+        assert_se(sd_radv_set_mac(ra, &mac_addr) >= 0);
+
+        /* Initially, counters should be zero */
+        assert_se(sd_radv_get_n_ra_sent(ra, &ra_sent) >= 0);
+        assert_se(ra_sent == 0);
+        assert_se(sd_radv_get_n_rs_received(ra, &rs_received) >= 0);
+        assert_se(rs_received == 0);
+
+        assert_se(sd_event_add_io(e, &recv_router_advertisement, test_fd[0], EPOLLIN, radv_recv_with_rs, ra) >= 0);
+        assert_se(sd_event_source_set_io_fd_own(recv_router_advertisement, true) >= 0);
+
+        assert_se(sd_event_add_time_relative(e, NULL, CLOCK_BOOTTIME,
+                                             30 * USEC_PER_SEC, 0,
+                                             NULL, INT_TO_PTR(-ETIMEDOUT)) >= 0);
+
+        assert_se(sd_radv_start(ra) >= 0);
+        assert_se(sd_event_loop(e) >= 0);
+
+        /* After the event loop: we should have sent at least 1 unsolicited RA,
+         * and received 1 RS which triggered a solicited RA response */
+        assert_se(sd_radv_get_n_ra_sent(ra, &ra_sent) >= 0);
+        printf("RA sent: %" PRIu64 "\n", ra_sent);
+        assert_se(ra_sent >= 1);
+
+        assert_se(sd_radv_get_n_rs_received(ra, &rs_received) >= 0);
+        printf("RS received: %" PRIu64 "\n", rs_received);
+        assert_se(rs_received == 1);
+
+        /* Verify we received at least 2 RAs (1 unsolicited + 1 solicited) */
+        printf("Total RAs received by test: %u\n", n_ra_received);
+        assert_se(n_ra_received >= 2);
 }
 
 TEST(ra) {
