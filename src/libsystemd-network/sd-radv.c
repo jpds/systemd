@@ -86,6 +86,22 @@ int sd_radv_is_running(sd_radv *ra) {
         return ra->state != RADV_STATE_IDLE;
 }
 
+int sd_radv_get_n_ra_sent(sd_radv *ra, uint64_t *ret) {
+        assert_return(ra, -EINVAL);
+        assert_return(ret, -EINVAL);
+
+        *ret = ra->ra_sent;
+        return 0;
+}
+
+int sd_radv_get_n_rs_received(sd_radv *ra, uint64_t *ret) {
+        assert_return(ra, -EINVAL);
+        assert_return(ret, -EINVAL);
+
+        *ret = ra->rs_received;
+        return 0;
+}
+
 static void radv_reset(sd_radv *ra) {
         assert(ra);
 
@@ -94,6 +110,7 @@ static void radv_reset(sd_radv *ra) {
         ra->recv_event_source = sd_event_source_disable_unref(ra->recv_event_source);
 
         ra->ra_sent = 0;
+        ra->rs_received = 0;
 }
 
 static sd_radv *radv_free(sd_radv *ra) {
@@ -193,6 +210,8 @@ static int radv_process_packet(sd_radv *ra, ICMP6Packet *packet) {
         r = ndisc_router_solicit_parse(ra, rs);
         if (r < 0)
                 return r;
+
+        ra->rs_received++;
 
         struct in6_addr src;
         r = sd_ndisc_router_solicit_get_sender_address(rs, &src);

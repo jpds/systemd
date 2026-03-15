@@ -40,6 +40,8 @@ int sd_radv_start(sd_radv *ra);
 int sd_radv_stop(sd_radv *ra);
 int sd_radv_is_running(sd_radv *ra);
 int sd_radv_send(sd_radv *ra);
+int sd_radv_get_n_ra_sent(sd_radv *ra, uint64_t *ret);
+int sd_radv_get_n_rs_received(sd_radv *ra, uint64_t *ret);
 
 int sd_radv_set_ifindex(sd_radv *ra, int ifindex);
 int sd_radv_set_ifname(sd_radv *ra, const char *ifname);
