@@ -5,6 +5,7 @@
 #include "sd-device.h"
 #include "sd-dhcp-client.h"
 #include "sd-dhcp6-client.h"
+#include "sd-radv.h"
 
 #include "dhcp-lease-internal.h"
 #include "dhcp-server-lease-internal.h"
@@ -1499,6 +1500,24 @@ static int lldp_tx_append_json(Link *link, sd_json_variant **v) {
         return json_variant_set_field_non_null(v, "LLDP", w);
 }
 
+static int radv_append_json(Link *link, sd_json_variant **v) {
+        uint64_t ra_sent = 0, rs_received = 0;
+
+        assert(link);
+        assert(v);
+
+        if (!link->radv)
+                return 0;
+
+        (void) sd_radv_get_n_ra_sent(link->radv, &ra_sent);
+        (void) sd_radv_get_n_rs_received(link->radv, &rs_received);
+
+        return sd_json_variant_merge_objectbo(
+                        v,
+                        SD_JSON_BUILD_PAIR_UNSIGNED("IPv6RouterAdvertisementsSent", ra_sent),
+                        SD_JSON_BUILD_PAIR_UNSIGNED("IPv6RouterSolicitsReceived", rs_received));
+}
+
 int link_build_json(Link *link, sd_json_variant **ret) {
         _cleanup_(sd_json_variant_unrefp) sd_json_variant *v = NULL;
         _cleanup_free_ char *type = NULL, *flags = NULL;
@@ -1636,6 +1655,10 @@ int link_build_json(Link *link, sd_json_variant **ret) {
                 return r;
 
         r = lldp_tx_append_json(link, &v);
+        if (r < 0)
+                return r;
+
+        r = radv_append_json(link, &v);
         if (r < 0)
                 return r;
 

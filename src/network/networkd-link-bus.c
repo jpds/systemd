@@ -15,6 +15,7 @@
 #include "networkd-dhcp4.h"
 #include "networkd-json.h"
 #include "networkd-link.h"
+#include "sd-radv.h"
 #include "networkd-link-bus.h"
 #include "networkd-manager.h"
 #include "networkd-state-file.h"
@@ -70,6 +71,31 @@ static int property_get_bit_rates(
                 rx = (uint64_t) ((UINT64_MAX - (link->stats_old.rx_bytes - link->stats_new.rx_bytes)) / interval_sec);
 
         return sd_bus_message_append(reply, "(tt)", tx, rx);
+}
+
+static int property_get_ipv6_ra_stats(
+                sd_bus *bus,
+                const char *path,
+                const char *interface,
+                const char *property,
+                sd_bus_message *reply,
+                void *userdata,
+                sd_bus_error *error) {
+
+        Link *link = ASSERT_PTR(userdata);
+        uint64_t n = 0;
+
+        assert(bus);
+        assert(reply);
+
+        if (link->radv) {
+                if (streq(property, "IPv6RouterAdvertisementsSent"))
+                        (void) sd_radv_get_n_ra_sent(link->radv, &n);
+                else if (streq(property, "IPv6RouterSolicitsReceived"))
+                        (void) sd_radv_get_n_rs_received(link->radv, &n);
+        }
+
+        return sd_bus_message_append(reply, "t", n);
 }
 
 static int verify_managed_link(Link *l, sd_bus_error *error) {
@@ -718,6 +744,8 @@ static const sd_bus_vtable link_vtable[] = {
         SD_BUS_PROPERTY("OnlineState", "s", property_get_online_state, offsetof(Link, online_state), SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
         SD_BUS_PROPERTY("AdministrativeState", "s", property_get_administrative_state, offsetof(Link, state), SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
         SD_BUS_PROPERTY("BitRates", "(tt)", property_get_bit_rates, 0, 0),
+        SD_BUS_PROPERTY("IPv6RouterAdvertisementsSent", "t", property_get_ipv6_ra_stats, 0, 0),
+        SD_BUS_PROPERTY("IPv6RouterSolicitsReceived", "t", property_get_ipv6_ra_stats, 0, 0),
 
         SD_BUS_METHOD_WITH_ARGS("SetNTP",
                                 SD_BUS_ARGS("as", servers),
