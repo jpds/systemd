@@ -216,7 +216,7 @@ static int dump_radv_statistics(Table *table, sd_bus *bus, const LinkInfo *info)
                 return 0;
         }
 
-        r = sd_bus_message_read(reply_sent, "v", "t", &ra_sent);
+        r = sd_bus_message_read(reply_sent, "t", &ra_sent);
         if (r < 0)
                 return bus_log_parse_error(r);
 
@@ -231,7 +231,7 @@ static int dump_radv_statistics(Table *table, sd_bus *bus, const LinkInfo *info)
                 return 0;
         }
 
-        r = sd_bus_message_read(reply_recv, "v", "t", &rs_received);
+        r = sd_bus_message_read(reply_recv, "t", &rs_received);
         if (r < 0)
                 return bus_log_parse_error(r);
 
