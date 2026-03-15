@@ -194,6 +194,61 @@ static int dump_statistics(Table *table, const LinkInfo *info) {
         return 0;
 }
 
+static int dump_radv_statistics(Table *table, sd_bus *bus, const LinkInfo *info) {
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply_sent = NULL, *reply_recv = NULL;
+        _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+        uint64_t ra_sent, rs_received;
+        int r;
+
+        assert(table);
+        assert(bus);
+        assert(info);
+
+        if (!arg_stats)
+                return 0;
+
+        r = link_get_property(bus, info->ifindex, &error, &reply_sent,
+                              "org.freedesktop.network1.Link",
+                              "IPv6RouterAdvertisementsSent", "t");
+        if (r < 0) {
+                log_debug_errno(r, "Failed to query IPv6RouterAdvertisementsSent, ignoring: %s",
+                                bus_error_message(&error, r));
+                return 0;
+        }
+
+        r = sd_bus_message_read(reply_sent, "v", "t", &ra_sent);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        sd_bus_error_free(&error);
+
+        r = link_get_property(bus, info->ifindex, &error, &reply_recv,
+                              "org.freedesktop.network1.Link",
+                              "IPv6RouterSolicitsReceived", "t");
+        if (r < 0) {
+                log_debug_errno(r, "Failed to query IPv6RouterSolicitsReceived, ignoring: %s",
+                                bus_error_message(&error, r));
+                return 0;
+        }
+
+        r = sd_bus_message_read(reply_recv, "v", "t", &rs_received);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        if (ra_sent == 0 && rs_received == 0)
+                return 0;
+
+        r = table_add_many(table,
+                           TABLE_FIELD, "RA Sent",
+                           TABLE_UINT64, ra_sent,
+                           TABLE_FIELD, "RS Received",
+                           TABLE_UINT64, rs_received);
+        if (r < 0)
+                return table_log_add_error(r);
+
+        return 0;
+}
+
 static int dump_hw_address(Table *table, sd_hwdb *hwdb, const char *field, const struct hw_addr_data *addr) {
         _cleanup_free_ char *description = NULL;
         int r;
@@ -924,6 +979,10 @@ static int link_status_one(
                 return r;
 
         r = dump_statistics(table, info);
+        if (r < 0)
+                return r;
+
+        r = dump_radv_statistics(table, bus, info);
         if (r < 0)
                 return r;
 
